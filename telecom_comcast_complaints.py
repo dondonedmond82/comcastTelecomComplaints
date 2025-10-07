@@ -1,4 +1,4 @@
-# app.py
+# telecom_comcast_dashboard.py
 import dash
 from dash import dcc, html, Input, Output, State
 import plotly.express as px
@@ -7,11 +7,7 @@ import pandas as pd
 # ---------------------------------------------------
 # Load dataset
 df = pd.read_csv("comcast_telecom_complaints_data.csv")
-
-# Clean column names
 df.columns = df.columns.str.strip()
-
-# Convert TotalCharges to numeric
 df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
 df = df.dropna(subset=['TotalCharges'])
 
@@ -20,6 +16,57 @@ df = df.dropna(subset=['TotalCharges'])
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 server = app.server
 app.title = "Telco Customer Dashboard"
+
+# ---------------------------------------------------
+# Functions for Home tab
+def correlation_heatmap(df):
+    corr = df.select_dtypes(include=['float64', 'int64']).corr()
+    fig = px.imshow(corr,
+                    text_auto=True,
+                    color_continuous_scale='Viridis',
+                    title="Correlation Heatmap of Numerical Features",
+                    height=800)  # increased height
+    return fig
+
+def kpi_cards(df):
+    total_customers = len(df)
+    avg_monthly = round(df['MonthlyCharges'].mean(), 2)
+    avg_total = round(df['TotalCharges'].mean(), 2)
+    churn_rate = round((df['Churn'].value_counts(normalize=True).get('Yes',0))*100,2)
+
+    cards = html.Div([
+        html.Div([
+            html.H4("Total Customers"),
+            html.P(f"{total_customers}")
+        ], style={"padding": "10px", "margin": "5px", "backgroundColor": "#d1e7dd", "textAlign":"center", "borderRadius":"5px", "flex":"1"}),
+
+        html.Div([
+            html.H4("Avg Monthly Charges"),
+            html.P(f"${avg_monthly}")
+        ], style={"padding": "10px", "margin": "5px", "backgroundColor": "#cff4fc", "textAlign":"center", "borderRadius":"5px", "flex":"1"}),
+
+        html.Div([
+            html.H4("Avg Total Charges"),
+            html.P(f"${avg_total}")
+        ], style={"padding": "10px", "margin": "5px", "backgroundColor": "#fff3cd", "textAlign":"center", "borderRadius":"5px", "flex":"1"}),
+
+        html.Div([
+            html.H4("Churn Rate"),
+            html.P(f"{churn_rate}%")
+        ], style={"padding": "10px", "margin": "5px", "backgroundColor": "#f8d7da", "textAlign":"center", "borderRadius":"5px", "flex":"1"}),
+    ], style={"display":"flex", "justifyContent":"space-around", "flexWrap":"wrap"})
+    return cards
+
+def scatter_matrix(dff):
+    fig = px.scatter_matrix(
+        dff,
+        dimensions=["tenure", "MonthlyCharges", "TotalCharges"],
+        color="Churn",
+        title="Scatter Matrix of Tenure, Monthly Charges, and Total Charges",
+        height=600
+    )
+    fig.update_layout(margin=dict(l=40, r=40, t=60, b=40))
+    return fig
 
 # ---------------------------------------------------
 # APP LAYOUT WITH TABS
@@ -44,11 +91,34 @@ app.layout = html.Div([
 )
 def render_tab_content(tab):
     if tab == 'tab-home':
+        kpis = kpi_cards(df)
+        corr_fig = correlation_heatmap(df)
+
         return html.Div([
-            html.P("Welcome! Use the tabs to explore insights about Telco customers.",
-                   style={"textAlign": "center", "fontSize": "18px"})
+            html.P("Welcome! Explore Telco customer insights below.", style={"textAlign": "center", "fontSize": "18px"}),
+
+            # KPIs
+            kpis,
+
+            # Dropdown for scatter matrix filter
+            html.Div([
+                html.Label("Filter Scatter Matrix by Gender:"),
+                dcc.Dropdown(
+                    id="home_filter_gender",
+                    options=[{"label": g, "value": g} for g in df["gender"].unique()] + [{"label":"All","value":"All"}],
+                    value="All",
+                    clearable=False,
+                    style={"width": "30%", "margin":"auto"}
+                )
+            ], style={"marginTop":"20px", "textAlign":"center"}),
+
+            # Correlation Heatmap
+            dcc.Graph(figure=corr_fig, style={"marginTop":"30px"}),
+
+            # Scatter Matrix
+            dcc.Graph(id="scatter_matrix_graph", style={"marginTop":"30px"})
         ])
-    
+
     elif tab == 'tab-bar-pie':
         return html.Div([
             html.H3("Bar & Pie Charts", style={"textAlign": "center"}),
@@ -64,7 +134,7 @@ def render_tab_content(tab):
                 dcc.Graph(id="pie_chart", style={"flex": "1", "minWidth": "400px"})
             ], style={"display": "flex", "flexWrap": "wrap", "justifyContent": "space-around"})
         ])
-    
+
     elif tab == 'tab-line-scatter':
         return html.Div([
             html.H3("Line & Scatter Insights", style={"textAlign": "center"}),
@@ -93,7 +163,7 @@ def render_tab_content(tab):
                 "border": "1px solid #ccc"
             })
         ])
-    
+
     elif tab == 'tab-heatmap':
         return html.Div([
             html.H3("Heatmap Analysis", style={"textAlign": "center"}),
@@ -112,6 +182,19 @@ def render_tab_content(tab):
         ])
 
 # ---------------------------------------------------
+# CALLBACK: Home Scatter Matrix Filter
+@app.callback(
+    Output("scatter_matrix_graph", "figure"),
+    Input("home_filter_gender", "value")
+)
+def update_home_scatter_matrix(selected_gender):
+    if selected_gender == "All":
+        dff = df
+    else:
+        dff = df[df["gender"] == selected_gender]
+    return scatter_matrix(dff)
+
+# ---------------------------------------------------
 # CALLBACKS FOR BAR & PIE
 @app.callback(
     [Output("bar_chart", "figure"),
@@ -127,6 +210,7 @@ def update_bar_pie(selected_gender):
                      title=f"Contract Type Distribution ({selected_gender})")
     return bar_fig, pie_fig
 
+# ---------------------------------------------------
 # CALLBACKS FOR LINE & SCATTER
 @app.callback(
     [Output("line_chart", "figure"),
@@ -149,6 +233,7 @@ def update_line_scatter(selected_gender):
     insight = f"For {selected_gender} customers, average monthly charges are ${avg_monthly}, average total charges are ${avg_total}."
     return line_fig, scatter_fig, insight
 
+# ---------------------------------------------------
 # CALLBACK: More Insights button
 @app.callback(
     Output("more_insights_output", "children"),
